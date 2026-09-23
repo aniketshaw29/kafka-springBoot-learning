@@ -1,0 +1,72 @@
+server:
+  port: 8081  # Different port per service — all run on the same machine
+
+spring:
+  application:
+    name: order-service
+
+  # ─────────────────────────────────────────────────────────────────
+  # Kafka producer configuration
+  # These map to org.apache.kafka.clients.producer.ProducerConfig
+  # ─────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: localhost:9092  # Kafka broker address
+    producer:
+      # Wait for ALL in-sync replicas to acknowledge — safest for orders
+      # Options: 0 (none), 1 (leader only), all (all replicas)
+      acks: all
+
+      # Retry failed sends up to 3 times before giving up
+      retries: 3
+
+      # Prevents duplicate messages when retrying (assigns sequence numbers)
+      # Required when acks=all
+      properties:
+        enable.idempotence: true
+
+        # Wait 5ms to batch messages — trades tiny latency for better throughput
+        linger.ms: 5
+
+        # Compress messages with snappy (fast, reasonable compression ratio)
+        compression.type: snappy
+
+      # Serialize the message key (orderId) as plain UTF-8 string
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+
+      # Serialize the message value (OrderPlacedEvent) as JSON
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+
+      # Include the Java class name in the JSON so the consumer knows what type to deserialize
+      properties:
+        spring.json.add.type.headers: true
+
+  # ─────────────────────────────────────────────────────────────────
+  # Database — Order Service has its own schema
+  # ─────────────────────────────────────────────────────────────────
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fooddelivery?currentSchema=order_service
+    username: fooddelivery
+    password: secret
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop  # Auto-create tables on startup (use 'validate' in production)
+    show-sql: true            # Log SQL queries — useful for learning
+    properties:
+      hibernate.format_sql: true
+      hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
+
+# ─────────────────────────────────────────────────────────────────
+# Topic names — defined here so they can be changed without recompiling
+# ─────────────────────────────────────────────────────────────────
+app:
+  kafka:
+    topics:
+      order-placed: order.placed
+      order-status-updated: order.status-updated
+
+logging:
+  level:
+    com.fooddelivery: DEBUG
+    org.springframework.kafka: INFO

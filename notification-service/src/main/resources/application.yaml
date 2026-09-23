@@ -1,0 +1,51 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: notification-service
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      # KEY DIFFERENCE from kitchen-service: different group ID.
+      #
+      # This is the fan-out pattern:
+      #   kitchen-service-group AND notification-service-group BOTH consume "order.placed"
+      #   Each group gets ALL messages — they don't compete.
+      #   Kitchen Service and Notification Service are completely independent.
+      #
+      # Analogy: Two people subscribed to the same email newsletter.
+      # When a newsletter is sent, BOTH receive a copy. Neither takes from the other.
+      group-id: notification-service-group
+
+      enable-auto-commit: false
+      auto-offset-reset: earliest
+
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      properties:
+        spring.json.trusted.packages: "com.fooddelivery.shared.events"
+        spring.json.type.mapping: >
+          orderPlaced:com.fooddelivery.shared.events.OrderPlacedEvent,
+          orderStatusUpdated:com.fooddelivery.shared.events.OrderStatusUpdatedEvent
+
+    listener:
+      ack-mode: MANUAL_IMMEDIATE
+      concurrency: 2  # Fewer concurrent threads — notifications are lighter workload
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fooddelivery?currentSchema=notification_service
+    username: fooddelivery
+    password: secret
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false  # Less verbose — notification service is simpler
+
+logging:
+  level:
+    com.fooddelivery: DEBUG
+    org.springframework.kafka: INFO

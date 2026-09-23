@@ -1,0 +1,125 @@
+version: '3.8'
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # ZooKeeper — Kafka's coordination service
+  # Tracks which broker is leader for each partition, cluster membership, config
+  # In Kafka 3.x+ you can use KRaft instead, but ZooKeeper is still widely used
+  # ─────────────────────────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000    # Heartbeat interval in ms — 2 seconds
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    healthcheck:
+      test: [ "CMD", "bash", "-c", "echo ruok | nc localhost 2181" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Kafka Broker — the main event streaming server
+  # This is a single-broker setup for learning. Production would have 3+ brokers.
+  # ─────────────────────────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      # 9092: for apps running on your machine (order-service, kitchen-service)
+      # 29092: for apps running inside Docker (if you containerize the Spring Boot apps)
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1   # Unique ID for this broker in the cluster
+
+      # ZooKeeper connection
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+
+      # Listener configuration:
+      #   PLAINTEXT: for Docker-internal communication (container-to-container)
+      #   PLAINTEXT_HOST: for external access from your machine
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Replication factor of 1 because we only have 1 broker (learning setup)
+      # In production with 3 brokers, set these to 3
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # How long to keep messages (7 days = 604800000 ms)
+      KAFKA_LOG_RETENTION_MS: 604800000
+
+      # Auto-create topics — convenient for development, disable in production
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # Allow smaller batch sizes (useful for testing with low volume)
+      KAFKA_LOG_FLUSH_INTERVAL_MESSAGES: 10000
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: [ "CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092" ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Kafka UI — Visual dashboard for exploring topics, messages, consumer groups
+  # Open http://localhost:8080 after starting
+  # ─────────────────────────────────────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-kafka
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+      # Show JSON values in human-readable format (instead of raw bytes)
+      KAFKA_CLUSTERS_0_PROPERTIES_SECURITY_PROTOCOL: PLAINTEXT
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # PostgreSQL — database for all three Spring Boot services
+  # Each service gets its own database schema to simulate microservice isolation
+  # ─────────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: fooddelivery
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: fooddelivery
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Init script creates separate schemas for each service
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U fooddelivery" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+  postgres-data:

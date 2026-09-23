@@ -1,0 +1,85 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: kitchen-service
+
+  # ─────────────────────────────────────────────────────────────────
+  # Kafka consumer configuration
+  # ─────────────────────────────────────────────────────────────────
+  kafka:
+    bootstrap-servers: localhost:9092
+    consumer:
+      # Consumer group ID — all Kitchen Service instances share this ID.
+      # Kafka distributes partitions across instances in this group.
+      # If you start 3 instances with 3 partitions → each handles 1 partition.
+      group-id: kitchen-service-group
+
+      # DO NOT auto-commit — we want to commit AFTER successful processing.
+      # If the service crashes mid-processing, Kafka will redeliver the message.
+      enable-auto-commit: false
+
+      # When Kitchen Service first starts (new group), start from the EARLIEST message.
+      # This ensures we don't miss orders that were placed before the kitchen came online.
+      # Change to "latest" to only process new orders from startup time.
+      auto-offset-reset: earliest
+
+      # Deserialize the key (orderId) as a plain string
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+      # Deserialize the value as JSON back into Java objects
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+
+      # Security: only trust event classes from our package
+      properties:
+        spring.json.trusted.packages: "com.fooddelivery.shared.events"
+
+        # Map JSON type headers back to Java classes
+        spring.json.type.mapping: >
+          orderPlaced:com.fooddelivery.shared.events.OrderPlacedEvent,
+          orderStatusUpdated:com.fooddelivery.shared.events.OrderStatusUpdatedEvent
+
+        # Max time between polls before Kafka considers this consumer dead
+        # Increase if your processing takes longer than 5 minutes
+        max.poll.interval.ms: 300000
+
+        # Fetch up to 50 records per poll — tune based on processing speed
+        max.poll.records: 50
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/fooddelivery?currentSchema=kitchen_service
+    username: fooddelivery
+    password: secret
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: true
+
+  # ─────────────────────────────────────────────────────────────────
+  # Kafka listener container configuration (ack mode, concurrency)
+  # ─────────────────────────────────────────────────────────────────
+  kafka:
+    listener:
+      # MANUAL_IMMEDIATE: commit the offset exactly when ack.acknowledge() is called
+      # This gives us full control over exactly-once processing
+      ack-mode: MANUAL_IMMEDIATE
+
+      # How many concurrent listener threads to use.
+      # Each thread gets assigned one or more partitions.
+      # Set to number of partitions for maximum parallelism.
+      concurrency: 3
+
+app:
+  kafka:
+    retry:
+      max-attempts: 3           # How many times to retry a failed message
+      initial-interval-ms: 1000 # Wait 1s before first retry
+      multiplier: 2.0           # Double the wait time each retry
+      max-interval-ms: 10000    # Cap at 10s between retries
+
+logging:
+  level:
+    com.fooddelivery: DEBUG
+    org.springframework.kafka: INFO
